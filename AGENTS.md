@@ -1,65 +1,93 @@
-# 项目上下文
+# 错题集 Web 应用 — 项目上下文
 
-### 版本技术栈
+移动端优先（375px+）的错题整理工具：拍照上传 → 多模态大模型批改 → 人工确认 → 错题归档 → 统计分析 → 抽题重练。
 
-- **Framework**: Next.js 16 (App Router)
-- **Core**: React 19
-- **Language**: TypeScript 5
-- **UI 组件**: shadcn/ui (基于 Radix UI)
-- **Styling**: Tailwind CSS 4
+## 版本技术栈
+
+- **Framework**: Next.js 16 (App Router) + React 19 + TypeScript 5
+- **UI**: shadcn/ui (`src/components/ui/`) + Tailwind CSS 4
+- **数据库**: Supabase (Postgres)，SDK：`@supabase/supabase-js`，Drizzle 仅用于 schema 声明与迁移
+- **对象存储**: `coze-coding-dev-sdk` 的 S3Storage（存题目原图）
+- **大模型**: `coze-coding-dev-sdk` 的 LLMClient（多模态批改 + 练习判分 + 学习建议）
+- **图表**: recharts ｜ **公式渲染**: katex
 
 ## 目录结构
 
 ```
-├── public/                 # 静态资源
-├── scripts/                # 构建与启动脚本
-│   ├── build.sh            # 构建脚本
-│   ├── dev.sh              # 开发环境启动脚本
-│   ├── prepare.sh          # 预处理脚本
-│   └── start.sh            # 生产环境启动脚本
-├── src/
-│   ├── app/                # 页面路由与布局
-│   ├── components/ui/      # Shadcn UI 组件库
-│   ├── hooks/              # 自定义 Hooks
-│   ├── lib/                # 工具库
-│   │   └── utils.ts        # 通用工具函数 (cn)
-│   └── server.ts           # 自定义服务端入口
-├── next.config.ts          # Next.js 配置
-├── package.json            # 项目依赖管理
-└── tsconfig.json           # TypeScript 配置
+src/
+├── app/
+│   ├── page.tsx                  # 首页 = 上传页（图片多选/压缩/科目年级/进度）
+│   ├── login/page.tsx            # 登录/注册（邮箱+密码）
+│   ├── review/[batchId]/page.tsx # 批改结果确认页（可编辑、改判、确认入库）
+│   ├── mistakes/page.tsx         # 错题本列表（筛选/搜索/分页）
+│   ├── mistakes/[id]/page.tsx    # 错题详情（原图放大/解析/已掌握/删除）
+│   ├── stats/page.tsx            # 统计页（4 图表 + AI 流式建议）
+│   ├── practice/page.tsx         # 练习模式（抽题/作答/判分/结果）
+│   ├── profile/page.tsx          # 我的（账号信息/退出）
+│   └── api/
+│       ├── supabase-config/      # 下发前端 Supabase 配置（公开）
+│       ├── subjects/             # 科目列表（service role 读）
+│       ├── batches/              # POST 创建批次+图片上传 S3
+│       ├── batches/[id]/         # GET 批次详情（含待确认题目+签名URL）
+│       ├── batches/[id]/grade/   # POST 触发 AI 批改
+│       ├── batches/[id]/confirm/ # POST 应用人工修正并确认入库
+│       ├── mistakes/             # GET 列表（subject/status/kp/error_type/q/days/page）
+│       ├── mistakes/[id]/        # GET/PATCH/DELETE
+│       ├── stats/                # GET 聚合统计
+│       ├── stats/advice/         # POST SSE 流式学习建议
+│       ├── practice/             # POST 抽题（不含答案）
+│       └── practice/submit/      # POST 判分+写 practice_sessions
+├── components/
+│   ├── app-shell.tsx             # 受保护页骨架（移动底部 tab / 桌面顶部导航）
+│   ├── auth-guard.tsx            # 登录态守卫
+│   ├── math-text.tsx             # KaTeX 混排渲染（$...$ / $$...$$）
+│   └── ui/                       # shadcn 组件
+├── lib/
+│   ├── constants.ts              # 科目/年级/判定/错因 + SUBJECT_ICONS
+│   ├── api.ts                    # apiFetch/apiJson（自动带 x-session）
+│   ├── supabase-browser.ts       # 浏览器端 Supabase 客户端（懒加载，等 config）
+│   ├── supabase-config-inject.tsx# SupabaseConfigProvider（挂载即取配置）
+│   └── server/
+│       ├── auth.ts               # getAuthContext：x-session → user + 带 RLS 的 client
+│       ├── storage.ts            # S3Storage 封装（upload/signImageUrl）
+│       ├── llm.ts                # gradeImages/judgePracticeAnswers/streamAdvice/buildAdvicePrompt
+│       └── stats.ts              # computeStats（分页拉全量后应用层聚合）
+└── storage/database/
+    ├── supabase-client.ts        # getSupabaseClient(token?) 无 token=service role
+    └── shared/schema.ts          # Drizzle schema（唯一表结构来源）
 ```
 
-- 项目文件（如 app 目录、pages 目录、components 等）默认初始化到 `src/` 目录下。
+## 数据模型（schema.ts）
 
-## 包管理规范
+- `subjects`：id/name/icon/sort_order（9 个科目已种子；RLS 启用无策略，仅 service role 读）
+- `batches`：id/user_id/subject/grade/image_keys(text[])/status(uploading|grading|done|failed)/raw_response/error_message
+- `mistakes`：id/user_id/batch_id/subject/grade/source_image_key/question_index/question_text/student_answer/correct_answer/judgement(correct|wrong|partial|uncertain)/analysis/knowledge_points(text[])/error_type/confidence/status(pending_review|confirmed|mastered)/practice_count/practice_correct_count
+- `practice_sessions`：id/user_id/subject/mistake_ids(text[])/correct_count/total/detail(jsonb)
 
-**仅允许使用 pnpm** 作为包管理器，**严禁使用 npm 或 yarn**。
-**常用命令**：
-- 安装依赖：`pnpm add <package>`
-- 安装开发依赖：`pnpm add -D <package>`
-- 安装所有依赖：`pnpm install`
-- 移除依赖：`pnpm remove <package>`
+**RLS**：三张用户表均为场景 D（`auth.uid() = user_id` 全策略）。后端一律经 `getAuthContext` 拿带 token 的 client 并显式 `.eq('user_id', ...)`，双重隔离。
+**注意**：存储列保存的是对象存储 **key**（`image_keys`/`source_image_key`），读取时用 `signImageUrl` 生成签名 URL（有效期 1 小时），禁止把签名 URL 持久化。
 
-## 开发规范
+## 核心流程约定
 
-### 编码规范
+1. **上传**：前端 canvas 压缩（长边 1600px、JPEG 0.8、最多 9 张）→ `POST /api/batches`（multipart）→ `POST /api/batches/:id/grade`（同步等待，模型超时 5min）。
+2. **批改**：`gradeImages` 主模型 `doubao-seed-2-0-pro-260215`，失败回退 `doubao-seed-2-0-lite-260215`，temperature 0.1，要求纯 JSON 输出；`extractJsonObject` 容错解析 + `normalizeQuestions` 归一化。结果写入 mistakes（status=pending_review，**含 correct 题**）。
+3. **确认入库**：`POST confirm` 应用前端编辑 → 删除 judgement=correct 的行 → 其余置 confirmed。全部正确时返回 confirmed_count=0，前端给鼓励文案。
+4. **错题本**：列表只展示 confirmed/mastered；facets（知识点/错因）用于筛选器选项。
+5. **统计**：`computeStats` 分页拉取（防 1000 行截断）应用层聚合；建议走 SSE（`data: {content}` 增量，`data: [DONE]` 结束）。
+6. **练习**：抽题不返回答案；提交后 `judgePracticeAnswers` 一次调用批量判分，回写 practice_count/practice_correct_count。
 
-- 默认按 TypeScript `strict` 心智写代码；优先复用当前作用域已声明的变量、函数、类型和导入，禁止引用未声明标识符或拼错变量名。
-- 禁止隐式 `any` 和 `as any`；函数参数、返回值、解构项、事件对象、`catch` 错误在使用前应有明确类型或先完成类型收窄，并清理未使用的变量和导入。
+## 构建与测试命令
 
-### next.config 配置规范
+- 包管理：**仅 pnpm**
+- 开发：`coze dev`（主仓预览常驻 5000 端口，HMR 自动生效）
+- 静态检查：`pnpm ts-check` / `pnpm lint --quiet`
+- 数据库迁移：`npx coze-coding-ai db upgrade`（改 schema.ts 后必跑）
+- 模型回读：`npx coze-coding-ai db generate-models`
 
-- 配置的路径不要写死绝对路径，必须使用 path.resolve(__dirname, ...)、import.meta.dirname 或 process.cwd() 动态拼接。
+## 编码规范
 
-### Hydration 问题防范
-
-1. 严禁在 JSX 渲染逻辑中直接使用 typeof window、Date.now()、Math.random() 等动态数据。**必须使用 'use client' 并配合 useEffect + useState 确保动态内容仅在客户端挂载后渲染**；同时严禁非法 HTML 嵌套（如 <p> 嵌套 <div>）。
-2. **禁止使用 head 标签**，优先使用 metadata，详见文档：https://nextjs.org/docs/app/api-reference/functions/generate-metadata
-   1. 三方 CSS、字体等资源可在 `globals.css` 中顶部通过 `@import` 引入或使用 next/font
-   2. preload, preconnect, dns-prefetch 通过 ReactDOM 的 preload、preconnect、dns-prefetch 方法引入
-   3. json-ld 可阅读 https://nextjs.org/docs/app/guides/json-ld
-
-## UI 设计与组件规范 (UI & Styling Standards)
-
-- 模板默认预装核心组件库 `shadcn/ui`，位于`src/components/ui/`目录下
-- Next.js 项目**必须默认**采用 shadcn/ui 组件、风格和规范，**除非用户指定用其他的组件和规范。**
+- TypeScript strict 心智：禁止隐式 any/as any；API route 统一 `getAuthContext` 鉴权，401 用 `unauthorized()`，异常用 `serverError(e, '中文提示')`。
+- Hydration：动态值（Date.now/Math.random/window）只在 client 组件 useEffect 后用；禁止非法嵌套。
+- 前端调接口一律走 `apiFetch/apiJson`（自动处理 x-session 与未登录跳转）。
+- 三方字体走 `globals.css` 顶部 `@import`（CN 用 fonts.googleapis.cn）；禁止 `<head>` 手写标签。
+- 设计风格见 `DESIGN.md`：主色 teal（青绿）、错题信号色用柔化 rose/amber 而非刺眼大红、卡片式、触控目标 ≥44px。

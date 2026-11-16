@@ -6,9 +6,11 @@ import {
   text,
   integer,
   real,
+  boolean,
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -18,13 +20,36 @@ export const healthCheck = pgTable("health_check", {
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow(),
 });
 
-// 科目字典表（公共数据，后端 service role 读取）
-export const subjects = pgTable("subjects", {
-  id: serial().primaryKey(),
-  name: varchar("name", { length: 64 }).notNull().unique(),
-  icon: varchar("icon", { length: 64 }).notNull().default("book-open"),
-  sort_order: integer("sort_order").notNull().default(0),
-});
+// 科目表：一级管理对象，按用户隔离。
+// 系统预置 9 个科目（is_system=true，禁止删除，可复制到每个用户名下后允许调整 judge_profile）；
+// 用户可新增自定义科目（is_system=false，可编辑/排序/删除）。
+// judge_profile 结构：
+// {
+//   strictness: "process" | "answer" | "points",   // 判分严格度：重过程 | 只看答案 | 按采分点
+//   formula_format: "latex" | "plain",             // 公式输出格式
+//   has_subjective: boolean,                       // 是否含主观题
+//   error_types: string[],                         // 错因枚举（强约束模型输出）
+//   subjective_rule: string,                       // 主观题评分规则
+//   extra_rules: string                            // 科目附加判分规则
+// }
+export const subjects = pgTable(
+  "subjects",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    user_id: uuid("user_id").notNull().default(sql`auth.uid()`),
+    name: varchar("name", { length: 64 }).notNull(),
+    icon: varchar("icon", { length: 64 }).notNull().default("book-open"),
+    color: varchar("color", { length: 16 }).notNull().default("#0d9488"),
+    judge_profile: jsonb("judge_profile").notNull().default(sql`'{}'::jsonb`),
+    sort_order: integer("sort_order").notNull().default(0),
+    is_system: boolean("is_system").notNull().default(false),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("subjects_user_name_uidx").on(table.user_id, table.name),
+    index("subjects_user_id_idx").on(table.user_id),
+  ],
+);
 
 // 批改批次：一次上传（可多张图）对应一个批次
 // 注意：按对象存储最佳实践，图片持久化存储 key，读取时动态生成签名 URL
@@ -33,6 +58,8 @@ export const batches = pgTable(
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     user_id: uuid("user_id").notNull().default(sql`auth.uid()`),
+    subject_id: uuid("subject_id").references(() => subjects.id, { onDelete: "set null" }),
+    // 科目名称冗余字段（展示用，以 subject_id 为准）
     subject: varchar("subject", { length: 64 }).notNull(),
     grade: varchar("grade", { length: 32 }).notNull(),
     image_keys: text("image_keys").array().notNull().default(sql`'{}'::text[]`),
@@ -45,6 +72,7 @@ export const batches = pgTable(
   (table) => [
     index("batches_user_id_idx").on(table.user_id),
     index("batches_user_status_idx").on(table.user_id, table.status),
+    index("batches_subject_id_idx").on(table.subject_id),
     index("batches_created_at_idx").on(table.created_at),
   ],
 );
@@ -56,6 +84,8 @@ export const mistakes = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     user_id: uuid("user_id").notNull().default(sql`auth.uid()`),
     batch_id: uuid("batch_id").references(() => batches.id, { onDelete: "set null" }),
+    subject_id: uuid("subject_id").references(() => subjects.id, { onDelete: "set null" }),
+    // 科目名称冗余字段（展示用，以 subject_id 为准）
     subject: varchar("subject", { length: 64 }).notNull(),
     grade: varchar("grade", { length: 32 }),
     source_image_key: text("source_image_key"),
@@ -83,6 +113,7 @@ export const mistakes = pgTable(
     index("mistakes_batch_id_idx").on(table.batch_id),
     index("mistakes_user_status_idx").on(table.user_id, table.status),
     index("mistakes_user_subject_idx").on(table.user_id, table.subject),
+    index("mistakes_user_subject_id_idx").on(table.user_id, table.subject_id),
     index("mistakes_user_created_idx").on(table.user_id, table.created_at),
   ],
 );

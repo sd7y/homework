@@ -21,7 +21,8 @@ import { AuthGuard } from '@/components/auth-guard';
 import { AppShell } from '@/components/app-shell';
 import { MathText } from '@/components/math-text';
 import { apiFetch } from '@/lib/api';
-import { SUBJECTS } from '@/lib/constants';
+import { type SubjectInfo } from '@/lib/constants';
+import { cn } from '@/lib/utils';
 
 interface MistakeListItem {
   id: string;
@@ -75,13 +76,33 @@ function MistakesList() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const [subject, setSubject] = useState('');
+  const [subjects, setSubjects] = useState<SubjectInfo[]>([]);
+  const [subjectId, setSubjectId] = useState('');
   const [status, setStatus] = useState('');
   const [knowledgePoint, setKnowledgePoint] = useState('');
   const [errorType, setErrorType] = useState('');
   const [days, setDays] = useState('0');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+
+  // 加载科目（带各科目错题数，用于 Tab 角标）
+  useEffect(() => {
+    apiFetch('/api/subjects')
+      .then(async (res) => {
+        const data = (await res.json()) as { subjects?: SubjectInfo[] };
+        if (res.ok) setSubjects(data.subjects ?? []);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const totalMistakeCount = subjects.reduce((sum, s) => sum + s.mistake_count, 0);
+
+  // 切换科目时重置科目相关的次级筛选
+  function switchSubject(id: string) {
+    setSubjectId(id);
+    setKnowledgePoint('');
+    setErrorType('');
+  }
 
   // 搜索防抖
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,7 +117,7 @@ function MistakesList() {
   const fetchPage = useCallback(
     async (page: number, append: boolean) => {
       const params = new URLSearchParams();
-      if (subject) params.set('subject', subject);
+      if (subjectId) params.set('subject_id', subjectId);
       if (status) params.set('status', status);
       if (knowledgePoint) params.set('knowledge_point', knowledgePoint);
       if (errorType) params.set('error_type', errorType);
@@ -114,7 +135,7 @@ function MistakesList() {
       setItems((prev) => (append ? [...prev, ...data.items] : data.items));
       return data.items.length;
     },
-    [subject, status, knowledgePoint, errorType, search, days],
+    [subjectId, status, knowledgePoint, errorType, search, days],
   );
 
   useEffect(() => {
@@ -164,22 +185,62 @@ function MistakesList() {
         />
       </div>
 
-      {/* 筛选 */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Select value={subject || '__all__'} onValueChange={(v) => setSubject(v === '__all__' ? '' : v)}>
-          <SelectTrigger className="h-10 w-full">
-            <SelectValue placeholder="科目" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">全部科目</SelectItem>
-            {SUBJECTS.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* 科目 Tab（带错题数角标，切换即筛选） */}
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+        <button
+          type="button"
+          onClick={() => switchSubject('')}
+          className={cn(
+            'flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm transition-colors',
+            subjectId === ''
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-card text-foreground hover:border-primary/50',
+          )}
+        >
+          全部
+          <span
+            className={cn(
+              'rounded-full px-1.5 py-0.5 text-xs leading-none tabular-nums',
+              subjectId === '' ? 'bg-white/25' : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {totalMistakeCount}
+          </span>
+        </button>
+        {subjects.map((s) => {
+          const active = subjectId === s.id;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => switchSubject(s.id)}
+              className={cn(
+                'flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm transition-colors',
+                active
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-card text-foreground hover:border-primary/50',
+              )}
+            >
+              <span
+                className="size-2 rounded-full"
+                style={{ backgroundColor: active ? 'currentColor' : s.color }}
+              />
+              {s.name}
+              <span
+                className={cn(
+                  'rounded-full px-1.5 py-0.5 text-xs leading-none tabular-nums',
+                  active ? 'bg-white/25' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {s.mistake_count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
+      {/* 次级筛选 */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Select value={status || '__all__'} onValueChange={(v) => setStatus(v === '__all__' ? '' : v)}>
           <SelectTrigger className="h-10 w-full">
             <SelectValue placeholder="状态" />

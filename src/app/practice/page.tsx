@@ -30,7 +30,7 @@ import { AuthGuard } from '@/components/auth-guard';
 import { AppShell } from '@/components/app-shell';
 import { MathText } from '@/components/math-text';
 import { apiFetch } from '@/lib/api';
-import { SUBJECTS } from '@/lib/constants';
+import { iconByName, type SubjectInfo } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 interface PracticeQuestion {
@@ -70,7 +70,8 @@ function Practice() {
   const router = useRouter();
 
   const [phase, setPhase] = useState<Phase>('setup');
-  const [subject, setSubject] = useState('');
+  const [subjects, setSubjects] = useState<SubjectInfo[]>([]);
+  const [subjectId, setSubjectId] = useState('');
   const [knowledgePoint, setKnowledgePoint] = useState('');
   const [count, setCount] = useState<5 | 10>(5);
   const [knowledgePoints, setKnowledgePoints] = useState<string[]>([]);
@@ -84,25 +85,44 @@ function Practice() {
   const [results, setResults] = useState<PracticeResult[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
 
-  // 加载知识点 facet
+  const selectedSubject = subjects.find((s) => s.id === subjectId) ?? null;
+
+  // 第一步：加载科目列表
   useEffect(() => {
-    apiFetch('/api/mistakes?page_size=1')
+    apiFetch('/api/subjects')
+      .then(async (res) => {
+        const data = (await res.json()) as { subjects?: SubjectInfo[] };
+        if (res.ok) setSubjects(data.subjects ?? []);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // 第二步：选中科目后加载该科目的知识点
+  useEffect(() => {
+    setKnowledgePoint('');
+    setKnowledgePoints([]);
+    if (!subjectId) return;
+    apiFetch(`/api/mistakes?subject_id=${encodeURIComponent(subjectId)}&page_size=1`)
       .then(async (res) => {
         const data = (await res.json()) as {
           facets?: { knowledge_points: string[] };
         };
         setKnowledgePoints(data.facets?.knowledge_points ?? []);
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => undefined);
+  }, [subjectId]);
 
   async function startPractice() {
+    if (!subjectId) {
+      toast.error('请先选择科目');
+      return;
+    }
     setStarting(true);
     try {
       const res = await apiFetch('/api/practice', {
         method: 'POST',
         body: JSON.stringify({
-          subject: subject || undefined,
+          subject_id: subjectId,
           knowledge_point: knowledgePoint || undefined,
           count,
         }),
@@ -127,7 +147,7 @@ function Practice() {
       const res = await apiFetch('/api/practice/submit', {
         method: 'POST',
         body: JSON.stringify({
-          subject: subject || undefined,
+          subject: selectedSubject?.name,
           items: questions.map((q) => ({
             mistake_id: q.id,
             user_answer: (answers[q.id] ?? '').trim(),
@@ -162,49 +182,106 @@ function Practice() {
         </div>
 
         <Card>
-          <CardContent className="space-y-4 pt-5">
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium">科目（可选）</p>
-              <Select
-                value={subject || '__all__'}
-                onValueChange={(v) => setSubject(v === '__all__' ? '' : v)}
-              >
-                <SelectTrigger className="h-11 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部科目</SelectItem>
-                  {SUBJECTS.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <CardContent className="space-y-5 pt-5">
+            {/* 第一步：选科目（必选） */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                <span className="mr-1 inline-flex size-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">1</span>
+                选择科目 <span className="text-destructive">*</span>
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {subjects.map((s) => {
+                  const Icon = iconByName(s.icon);
+                  const active = subjectId === s.id;
+                  const empty = s.mistake_count === 0;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={empty}
+                      onClick={() => setSubjectId(s.id)}
+                      aria-pressed={active}
+                      title={empty ? '该科目暂无错题' : undefined}
+                      className={cn(
+                        'flex h-16 flex-col items-center justify-center gap-1 rounded-xl border bg-card text-sm transition-all',
+                        active
+                          ? 'border-primary shadow ring-1 ring-primary/30'
+                          : 'border-border hover:border-primary/50',
+                        empty && 'opacity-40',
+                      )}
+                    >
+                      <span
+                        className="flex size-7 items-center justify-center rounded-full text-white"
+                        style={{ backgroundColor: s.color }}
+                      >
+                        <Icon className="size-4" />
+                      </span>
+                      <span className={cn('leading-none', active && 'font-semibold text-primary')}>
+                        {s.name}
+                      </span>
+                      <span className="text-[10px] leading-none text-muted-foreground">
+                        {s.mistake_count} 题
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium">知识点（可选）</p>
-              <Select
-                value={knowledgePoint || '__all__'}
-                onValueChange={(v) => setKnowledgePoint(v === '__all__' ? '' : v)}
-              >
-                <SelectTrigger className="h-11 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部知识点</SelectItem>
+            {/* 第二步：选知识点（可选，随科目联动） */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                <span className="mr-1 inline-flex size-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">2</span>
+                选择知识点（可选）
+              </p>
+              {!subjectId ? (
+                <p className="rounded-xl bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
+                  请先选择科目
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setKnowledgePoint('')}
+                    className={cn(
+                      'h-8 rounded-full border px-3 text-xs transition-colors',
+                      knowledgePoint === ''
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-card hover:border-primary/50',
+                    )}
+                  >
+                    全部知识点
+                  </button>
                   {knowledgePoints.map((kp) => (
-                    <SelectItem key={kp} value={kp}>
+                    <button
+                      key={kp}
+                      type="button"
+                      onClick={() => setKnowledgePoint(kp)}
+                      className={cn(
+                        'h-8 rounded-full border px-3 text-xs transition-colors',
+                        knowledgePoint === kp
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-card hover:border-primary/50',
+                      )}
+                    >
                       {kp}
-                    </SelectItem>
+                    </button>
                   ))}
-                </SelectContent>
-              </Select>
+                  {knowledgePoints.length === 0 && (
+                    <span className="px-1 py-1.5 text-xs text-muted-foreground">
+                      该科目暂无疑似知识点标签，将从全部错题中抽取
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium">题目数量</p>
+            {/* 题目数量 */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                <span className="mr-1 inline-flex size-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">3</span>
+                题目数量
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 {([5, 10] as const).map((n) => (
                   <button
@@ -228,7 +305,7 @@ function Practice() {
               size="lg"
               className="h-12 w-full text-base"
               onClick={startPractice}
-              disabled={starting}
+              disabled={starting || !subjectId}
             >
               {starting ? <Loader2 className="size-5 animate-spin" /> : <Play className="size-5" />}
               开始练习

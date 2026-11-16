@@ -4,8 +4,8 @@ import { getAuthContext, unauthorized, badRequest, serverError } from '@/lib/ser
 const ALLOWED_COUNTS = new Set([5, 10]);
 
 /**
- * 生成练习：按科目/知识点从错题本随机抽题（不返回答案与解析）
- * body: { subject?, knowledge_point?, count }
+ * 生成练习：从所选科目内按知识点随机抽题（不返回答案与解析）
+ * body: { subject_id（必填）, knowledge_point?, count }
  */
 export async function POST(request: NextRequest) {
   const auth = await getAuthContext(request);
@@ -13,21 +13,22 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as {
-      subject?: string;
+      subject_id?: string;
       knowledge_point?: string;
       count?: number;
     };
+    if (!body.subject_id) return badRequest('请先选择科目');
     const count = ALLOWED_COUNTS.has(Number(body.count)) ? Number(body.count) : 5;
 
     let query = auth.client
       .from('mistakes')
-      .select('id, subject, grade, question_text, knowledge_points, error_type, status')
+      .select('id, subject, subject_id, grade, question_text, knowledge_points, error_type, status')
       .eq('user_id', auth.userId)
+      .eq('subject_id', body.subject_id)
       .in('status', ['confirmed', 'mastered'])
       .order('created_at', { ascending: false })
       .limit(200);
 
-    if (body.subject) query = query.eq('subject', body.subject);
     if (body.knowledge_point) query = query.contains('knowledge_points', [body.knowledge_point]);
 
     const { data, error } = await query;

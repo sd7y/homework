@@ -10,14 +10,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AuthGuard } from '@/components/auth-guard';
 import { AppShell } from '@/components/app-shell';
 import { apiFetch } from '@/lib/api';
-import { GRADES, MAX_UPLOAD_IMAGES, SUBJECT_ICONS, iconByName } from '@/lib/constants';
+import { GRADES, MAX_UPLOAD_IMAGES, iconByName, type SubjectInfo } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
-interface SubjectItem {
-  id: number;
-  name: string;
-  icon: string;
-}
+const RECENT_SUBJECTS_KEY = 'recent_subject_ids';
 
 interface PickedImage {
   key: string;
@@ -38,13 +34,33 @@ export default function UploadPage() {
   );
 }
 
+/** 读取最近使用的科目 id 列表（localStorage，仅客户端） */
+function readRecentSubjectIds(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_SUBJECTS_KEY);
+    const arr = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushRecentSubjectId(id: string) {
+  try {
+    const list = [id, ...readRecentSubjectIds().filter((x) => x !== id)].slice(0, 4);
+    localStorage.setItem(RECENT_SUBJECTS_KEY, JSON.stringify(list));
+  } catch {
+    // localStorage 不可用时静默忽略
+  }
+}
+
 function UploadPanel() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [subjects, setSubjects] = useState<SubjectItem[]>([]);
+  const [subjects, setSubjects] = useState<SubjectInfo[]>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(true);
-  const [subject, setSubject] = useState('');
+  const [subjectId, setSubjectId] = useState('');
   const [grade, setGrade] = useState('');
   const [images, setImages] = useState<PickedImage[]>([]);
   const [stage, setStage] = useState<Stage>('idle');
@@ -54,9 +70,19 @@ function UploadPanel() {
   useEffect(() => {
     apiFetch('/api/subjects')
       .then(async (res) => {
-        const data = (await res.json()) as { subjects?: SubjectItem[]; error?: string };
+        const data = (await res.json()) as { subjects?: SubjectInfo[]; error?: string };
         if (!res.ok) throw new Error(data.error ?? '加载科目失败');
-        setSubjects(data.subjects ?? []);
+        const list = data.subjects ?? [];
+        // 最近使用过的科目排在最前面
+        const recent = readRecentSubjectIds();
+        const rank = new Map(recent.map((id, i) => [id, i]));
+        list.sort((a, b) => {
+          const ra = rank.has(a.id) ? rank.get(a.id)! : Number.MAX_SAFE_INTEGER;
+          const rb = rank.has(b.id) ? rank.get(b.id)! : Number.MAX_SAFE_INTEGER;
+          if (ra !== rb) return ra - rb;
+          return a.sort_order - b.sort_order;
+        });
+        setSubjects(list);
       })
       .catch((e: Error) => toast.error(e.message))
       .finally(() => setSubjectsLoading(false));
@@ -116,7 +142,7 @@ function UploadPanel() {
 
   async function handleSubmit() {
     setError(null);
-    if (!subject) {
+    if (!subjectId) {
       setError('请先选择科目');
       return;
     }
@@ -133,7 +159,7 @@ function UploadPanel() {
       // 阶段一：上传图片
       setStage('uploading');
       const formData = new FormData();
-      formData.append('subject', subject);
+      formData.append('subject_id', subjectId);
       formData.append('grade', grade);
       for (const img of images) {
         formData.append('images', new File([img.blob], 'question.jpg', { type: 'image/jpeg' }));
@@ -147,6 +173,9 @@ function UploadPanel() {
         throw new Error(uploadData.error ?? '上传失败，请重试');
       }
       const batchId = uploadData.batch.id;
+
+      // 记录最近使用科目
+      pushRecentSubjectId(subjectId);
 
       // 阶段二：AI 批改
       setStage('grading');
@@ -264,35 +293,45 @@ function UploadPanel() {
         </CardContent>
       </Card>
 
-      {/* 科目 */}
+      {/* 科目（卡片式，必选，最近使用优先） */}
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">选择科目</h2>
+        <h2 className="text-sm font-medium">
+          选择科目 <span className="text-destructive">*</span>
+        </h2>
         {subjectsLoading ? (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {Array.from({ length: 9 }).map((_, i) => (
-              <Skeleton key={i} className="h-11 rounded-xl" />
+              <Skeleton key={i} className="h-16 rounded-xl" />
             ))}
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {subjects.map((s) => {
-              const Icon = iconByName(s.icon) ?? SUBJECT_ICONS.default;
-              const active = subject === s.name;
+              const Icon = iconByName(s.icon);
+              const active = subjectId === s.id;
               return (
                 <button
                   key={s.id}
                   type="button"
                   disabled={busy}
-                  onClick={() => setSubject(s.name)}
+                  onClick={() => setSubjectId(s.id)}
+                  aria-pressed={active}
                   className={cn(
-                    'flex h-11 items-center justify-center gap-1.5 rounded-xl border text-sm transition-all',
+                    'flex h-16 flex-col items-center justify-center gap-1 rounded-xl border bg-card text-sm transition-all',
                     active
-                      ? 'border-primary bg-primary text-primary-foreground shadow'
-                      : 'border-border bg-card hover:border-primary/50',
+                      ? 'border-primary shadow ring-1 ring-primary/30'
+                      : 'border-border hover:border-primary/50',
                   )}
                 >
-                  <Icon className="size-4" />
-                  {s.name}
+                  <span
+                    className="flex size-7 items-center justify-center rounded-full text-white"
+                    style={{ backgroundColor: s.color }}
+                  >
+                    <Icon className="size-4" />
+                  </span>
+                  <span className={cn('leading-none', active ? 'font-semibold text-primary' : 'text-foreground')}>
+                    {s.name}
+                  </span>
                 </button>
               );
             })}

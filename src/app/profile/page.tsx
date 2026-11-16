@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2, LogOut, Mail, UserRound } from 'lucide-react';
+import { ChevronRight, Loader2, LogOut, Mail, Settings2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -70,6 +71,23 @@ function Profile() {
               </p>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">学习设置</CardTitle>
+        </CardHeader>
+        <CardContent className="px-2 pb-3">
+          <Link
+            href="/subjects"
+            className="flex h-11 items-center gap-3 rounded-lg px-2 text-sm transition-colors hover:bg-accent"
+          >
+            <Settings2 className="size-4 text-muted-foreground" />
+            <span>科目管理</span>
+            <span className="ml-auto text-xs text-muted-foreground">自定义科目 · 批改策略</span>
+            <ChevronRight className="size-4 text-muted-foreground" />
+          </Link>
         </CardContent>
       </Card>
 

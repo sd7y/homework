@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const sp = request.nextUrl.searchParams;
-    const subject = sp.get('subject') ?? '';
+    const subjectId = sp.get('subject_id') ?? '';
     const status = sp.get('status') ?? '';
     const knowledgePoint = sp.get('knowledge_point') ?? '';
     const errorType = sp.get('error_type') ?? '';
@@ -26,14 +26,14 @@ export async function GET(request: NextRequest) {
     let query = auth.client
       .from('mistakes')
       .select(
-        'id, subject, grade, question_text, knowledge_points, error_type, judgement, status, source_image_key, created_at',
+        'id, subject, subject_id, grade, question_text, knowledge_points, error_type, judgement, status, source_image_key, created_at',
         { count: 'exact' },
       )
       .eq('user_id', auth.userId)
       .in('status', ['confirmed', 'mastered'])
       .order('created_at', { ascending: false });
 
-    if (subject) query = query.eq('subject', subject);
+    if (subjectId) query = query.eq('subject_id', subjectId);
     if (status === 'confirmed' || status === 'mastered') query = query.eq('status', status);
     if (knowledgePoint) query = query.contains('knowledge_points', [knowledgePoint]);
     if (errorType) query = query.eq('error_type', errorType);
@@ -50,13 +50,15 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query.range(from, from + pageSize - 1);
     if (error) throw new Error(`查询错题失败: ${error.message}`);
 
-    // facets：用户的知识点与错因全集（轻量列查询）
-    const { data: facetRows, error: facetError } = await auth.client
+    // facets：知识点与错因全集（轻量列查询；指定科目时限定在该科目内，供练习页选知识点用）
+    let facetQuery = auth.client
       .from('mistakes')
       .select('knowledge_points, error_type')
       .eq('user_id', auth.userId)
       .in('status', ['confirmed', 'mastered'])
       .limit(2000);
+    if (subjectId) facetQuery = facetQuery.eq('subject_id', subjectId);
+    const { data: facetRows, error: facetError } = await facetQuery;
     if (facetError) throw new Error(`查询筛选项失败: ${facetError.message}`);
 
     const kpSet = new Set<string>();

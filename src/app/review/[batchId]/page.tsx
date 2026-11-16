@@ -42,7 +42,7 @@ import {
 import { AuthGuard } from '@/components/auth-guard';
 import { MathText } from '@/components/math-text';
 import { apiFetch } from '@/lib/api';
-import { ERROR_TYPES, JUDGEMENT_META } from '@/lib/constants';
+import { JUDGEMENT_META } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 type Judgement = 'correct' | 'wrong' | 'partial' | 'uncertain';
@@ -100,6 +100,7 @@ function ReviewContent() {
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [showAllCorrect, setShowAllCorrect] = useState(false);
   const [kpDrafts, setKpDrafts] = useState<Record<string, string>>({});
+  const [errorTypeOptions, setErrorTypeOptions] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,12 +111,16 @@ function ReviewContent() {
         batch?: BatchInfo;
         image_urls?: string[];
         items?: ReviewItem[];
+        error_type_options?: string[];
         error?: string;
       };
       if (!res.ok || !data.batch) throw new Error(data.error ?? '加载失败');
       setBatch(data.batch);
       setImageUrls(data.image_urls ?? []);
       setItems((data.items ?? []).filter((it) => it.status === 'pending_review'));
+      if (Array.isArray(data.error_type_options) && data.error_type_options.length > 0) {
+        setErrorTypeOptions(data.error_type_options);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     } finally {
@@ -388,7 +393,7 @@ function ReviewContent() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="未分类">未分类</SelectItem>
-                      {ERROR_TYPES.map((et) => (
+                      {errorTypeOptions.map((et) => (
                         <SelectItem key={et} value={et}>
                           {et}
                         </SelectItem>

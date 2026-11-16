@@ -3,12 +3,13 @@ import { HeaderUtils } from 'coze-coding-dev-sdk';
 import { getAuthContext, unauthorized, badRequest, serverError } from '@/lib/server/auth';
 import { signImageKeys } from '@/lib/server/storage';
 import { gradeImages } from '@/lib/server/llm';
+import { parseJudgeProfile, DEFAULT_CUSTOM_PROFILE } from '@/lib/server/subjects';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-/** 触发 AI 批改：读取批次图片 → 多模态模型识别判题 → 写入 mistakes（pending_review） */
+/** 触发 AI 批改：读取批次图片 → 按科目 judge_profile 构建判分提示词 → 多模态模型识别判题 → 写入 mistakes（pending_review） */
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const { data: batch, error: batchError } = await auth.client
       .from('batches')
-      .select('id, user_id, subject, grade, image_keys, status')
+      .select('id, user_id, subject, subject_id, grade, image_keys, status')
       .eq('id', id)
       .eq('user_id', auth.userId)
       .maybeSingle();
@@ -27,6 +28,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const imageKeys = (batch.image_keys ?? []) as string[];
     if (imageKeys.length === 0) return badRequest('批次中没有图片');
+
+    // 读取科目判分策略（科目被删等异常场景回退到默认策略）
+    let profile = DEFAULT_CUSTOM_PROFILE;
+    if (batch.subject_id) {
+      const { data: subjectRow } = await auth.client
+        .from('subjects')
+        .select('judge_profile')
+        .eq('id', batch.subject_id as string)
+        .eq('user_id', auth.userId)
+        .maybeSingle();
+      if (subjectRow?.judge_profile) profile = parseJudgeProfile(subjectRow.judge_profile);
+    }
 
     // 标记批改中
     const { error: markError } = await auth.client
@@ -44,6 +57,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         imageUrls,
         subject: batch.subject as string,
         grade: batch.grade as string,
+        profile,
         headers: HeaderUtils.extractForwardHeaders(request.headers),
       });
 
@@ -59,6 +73,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const rows = questions.map((q) => ({
         user_id: auth.userId,
         batch_id: id,
+        subject_id: (batch.subject_id as string | null) ?? null,
         subject: batch.subject as string,
         grade: batch.grade as string,
         source_image_key: imageKeys[q.image_index] ?? imageKeys[0] ?? null,
